@@ -3,6 +3,7 @@ import numpy as np
 import sys
 import math
 import os
+import argparse
 import logging
 import threading
 import time
@@ -17,7 +18,9 @@ class FlushFileHandler(logging.FileHandler):
 
 
 def setup_logging():
-    log_file = os.path.join("out", "process.log")
+    log_dir = os.path.join("out", "log")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "process.log")
 
     # Ensure standard handlers
     handler = FlushFileHandler(log_file, encoding='utf-8')
@@ -314,9 +317,17 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
 
 
 def main():
+    # Parse command line arguments for mesh sizing
+    parser = argparse.ArgumentParser(description="Gmsh Mesh Generator")
+    parser.add_argument('--size_min', type=float, default=1.0, help='Minimum mesh element size')
+    parser.add_argument('--size_max', type=float, default=10.0, help='Maximum mesh element size')
+    # Use parse_known_args to avoid conflict if other args are passed (though we might filter sys.argv for gmsh)
+    args, unknown_args = parser.parse_known_args()
+
     setup_logging()
     print("Initializing Gmsh...")
-    gmsh.initialize()
+    # Initialize Gmsh with only the script name to avoid parsing our custom arguments
+    gmsh.initialize([sys.argv[0]] + unknown_args)
 
     # 拦截 Gmsh 的终端输出，改为记录到日志
     gmsh.option.setNumber("General.Terminal", 0)
@@ -371,9 +382,10 @@ def main():
     # gmsh.model.mesh.field.setNumber(2, "SizeMin", lc / 30)
     # gmsh.model.mesh.field.setNumber(2, "SizeMax", lc)
     # gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 20)
-    gmsh.option.setNumber("Mesh.MeshSizeMin", 200)
+    print(f"Setting Mesh Size: Min={args.size_min}, Max={args.size_max}")
+    gmsh.option.setNumber("Mesh.MeshSizeMin", args.size_min)
     print("Generating mesh...")
-    gmsh.option.setNumber("Mesh.MeshSizeMax", 200)
+    gmsh.option.setNumber("Mesh.MeshSizeMax", args.size_max)
     gmsh.model.mesh.generate(2)
     gmsh.model.occ.synchronize()
 
@@ -399,10 +411,13 @@ def main():
 
     # Ensure out directory exists
     os.makedirs('out', exist_ok=True)
+    # Ensure data sub-directory exists
+    data_dir = os.path.join('out', 'data')
+    os.makedirs(data_dir, exist_ok=True)
 
     print("Writing nodes to file...")
 
-    with open(os.path.join('out', 'nodes.txt'), 'w') as fnode:
+    with open(os.path.join(data_dir, 'nodes.txt'), 'w') as fnode:
         fnode.write(str(len(nodeTags)) + "\n")
         for tag, xyz_e in zip(nodeTags, nodeCoords):
             xyz_e = ' '.join(str(i) for i in xyz_e)
@@ -413,10 +428,10 @@ def main():
     numElem = 0
     boundary = 0
     i = 0
-    with open(os.path.join('out', 'zone.txt'), 'w') as fzone, \
-            open(os.path.join('out', 'inter.txt'), 'w') as finter, \
-            open(os.path.join('out', 'interface.txt'), 'w') as finterface, \
-            open(os.path.join('out', 'elements.txt'), 'w') as felement:
+    with open(os.path.join(data_dir, 'zone.txt'), 'w') as fzone, \
+            open(os.path.join(data_dir, 'inter.txt'), 'w') as finter, \
+            open(os.path.join(data_dir, 'interface.txt'), 'w') as finterface, \
+            open(os.path.join(data_dir, 'elements.txt'), 'w') as felement:
         fzone.write(str(int((zone) / 2)) + "\n")
         for e in entities:
             dim = e[0]
@@ -472,6 +487,27 @@ def main():
     gmsh.logger.stop()
 
     print("Process completed successfully. Check 'out/' for results.")
+
+    # 导出通用的可视化格式
+    print("Exporting visualization files to 'out/visual' (vtk, msh, stl, cgns, obj)...")
+
+    # Ensure visualization directory exists
+    visual_dir = os.path.join('out', 'visual')
+    os.makedirs(visual_dir, exist_ok=True)
+
+    # .vtk 文件通用性很强，Tecplot(通过插件) 和 ParaView 都能直接读取
+    gmsh.write(os.path.join(visual_dir, 'visualization.vtk'))
+    # .msh 是 Gmsh 原生格式，保留信息最全
+    gmsh.write(os.path.join(visual_dir, 'visualization.msh'))
+    # .stl 表面网格通用格式，MeshLab/SolidWorks 等常用
+    gmsh.write(os.path.join(visual_dir, 'visualization.stl'))
+    # .cgns CFD 通用格式，Tecplot 原生支持极佳
+    try:
+        gmsh.write(os.path.join(visual_dir, 'visualization.cgns'))
+    except Exception:
+        pass  # 忽略不支持 CGNS 的情况
+    # .obj 通用 3D 模型格式
+    gmsh.write(os.path.join(visual_dir, 'visualization.obj'))
 
     # Visualization
     print("Opening Gmsh GUI for visualization...")
