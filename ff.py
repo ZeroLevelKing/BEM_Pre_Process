@@ -1,14 +1,13 @@
 import gmsh
 import numpy as np
 import sys
-from collections import deque
-import sys
 import math
 import os
-import numpy as np
 import logging
 import threading
 import time
+from collections import deque
+from typing import List, Tuple, Set, Dict, Optional
 
 
 class FlushFileHandler(logging.FileHandler):
@@ -256,6 +255,10 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
 
     corrected_elements = bfs_fix_orientation(max_x_elem, surface)
 
+    # Build a hash map for fast O(1) lookup of corrected element orientations
+    # Key: frozenset of nodes (order-independent), Value: list of nodes (correct order)
+    corrected_map = {frozenset(tri): tri for tri in corrected_elements}
+
     num_nodes = 3
     for sur in surface:
         elemType, elemTag, elemNodeTag = gmsh.model.mesh.getElements(
@@ -274,50 +277,38 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
             for tag, nodes in zip(
                 elemTag[0], np.array(elemNodeTag[0]).reshape(
                     (-1, num_nodes))):
-                corrected_elem = next(
-                    (ce for ce in corrected_elements if set(nodes) == set(ce)), None)
-                if corrected_elem is not None:
-                    nodes_str = ' '.join(str(i) for i in nodes)
-                    finterface.write(str(tag) +
-                                     " " +
-                                     str(nodes_str) +
-                                     " " +
-                                     str(abs(sur[1])) +
-                                     "\n")
-                else:
-                    nodes_str = ' '.join(str(i) for i in nodes)
-                    finterface.write(str(tag) +
-                                     " " +
-                                     str(nodes_str) +
-                                     " " +
-                                     str(abs(sur[1])) +
-                                     "\n")
+
+                # Optimize lookup using hash map
+                corrected_elem = corrected_map.get(frozenset(nodes))
+
+                final_nodes = corrected_elem if corrected_elem is not None else nodes
+                nodes_str = ' '.join(str(i) for i in final_nodes)
+
+                finterface.write(str(tag) +
+                                 " " +
+                                 str(nodes_str) +
+                                 " " +
+                                 str(abs(sur[1])) +
+                                 "\n")
         else:
             for tag, nodes in zip(
                 elemTag[0], np.array(elemNodeTag[0]).reshape(
                     (-1, num_nodes))):
-                corrected_elem = next(
-                    (ce for ce in corrected_elements if set(nodes) == set(ce)), None)
-                if corrected_elem is not None:
-                    nodes_str = ' '.join(str(i) for i in nodes)
-                    felement.write(str(tag) +
-                                   " " +
-                                   str(nodes_str) +
-                                   " " +
-                                   str(abs(sur[1])) +
-                                   " " +
-                                   str(abs(e[1])) +
-                                   "\n")
-                else:
-                    nodes_str = ' '.join(str(i) for i in nodes)
-                    felement.write(str(tag) +
-                                   " " +
-                                   str(nodes_str) +
-                                   " " +
-                                   str(abs(sur[1])) +
-                                   " " +
-                                   str(abs(e[1])) +
-                                   "\n")
+
+                # Optimize lookup using hash map
+                corrected_elem = corrected_map.get(frozenset(nodes))
+
+                final_nodes = corrected_elem if corrected_elem is not None else nodes
+                nodes_str = ' '.join(str(i) for i in final_nodes)
+
+                felement.write(str(tag) +
+                               " " +
+                               str(nodes_str) +
+                               " " +
+                               str(abs(sur[1])) +
+                               " " +
+                               str(abs(e[1])) +
+                               "\n")
 
     # fzone.write(str(len(surface)) + "\n")
 
@@ -385,6 +376,17 @@ def main():
     gmsh.option.setNumber("Mesh.MeshSizeMax", 200)
     gmsh.model.mesh.generate(2)
     gmsh.model.occ.synchronize()
+
+    # Pre-calculation processing time estimation
+    # Get all 2D elements to estimate workload
+    _, all_elem_tags, _ = gmsh.model.mesh.getElements(2)
+    total_2d_elements = sum(len(tags) for tags in all_elem_tags)
+
+    # Heuristic: 50,000 elements/sec for BFS and IO
+    estimated_time = total_2d_elements / 5000.0
+    print(f"Total mesh elements: {total_2d_elements}")
+    print(f"Estimated post-processing time: {estimated_time:.2f} seconds")
+
     # if '-nopopup' not in sys.argv:
     # gmsh.fltk.run()
 
@@ -470,6 +472,14 @@ def main():
     gmsh.logger.stop()
 
     print("Process completed successfully. Check 'out/' for results.")
+
+    # Visualization
+    print("Opening Gmsh GUI for visualization...")
+    gmsh.option.setNumber("Mesh.SurfaceFaces", 1)
+    gmsh.option.setNumber("Mesh.Normals", 20)  # Length of normal vectors
+    gmsh.option.setNumber("Mesh.ColorCarousel", 0)  # Standard color
+    gmsh.fltk.run()
+
     gmsh.finalize()
 
 
