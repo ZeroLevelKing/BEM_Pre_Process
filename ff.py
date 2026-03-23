@@ -1,17 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jun  4 17:17:14 2024
-
-@author: HJY
-"""
-
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jun  4 13:43:05 2024
-
-@author: HJY
-"""
-
 import gmsh
 import numpy as np
 import sys
@@ -89,7 +75,6 @@ def get_shared_edge(tri1, tri2):
     # If no shared edge is found, return None
     return None
 
-
 def adjust_triangle_orientation(reference_tri, tri, shared_edge):
     ref_idx0 = np.where(reference_tri == shared_edge[0])[0][0]
     ref_idx1 = np.where(reference_tri == shared_edge[1])[0][0]
@@ -117,8 +102,6 @@ def adjust_triangle_orientation(reference_tri, tri, shared_edge):
         else:
            # print("mei222222")
             return tri
-
-
 
 def bfs_fix_orientation(start_elem, surfaces):
     queue = deque([start_elem])
