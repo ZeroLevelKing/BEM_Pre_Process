@@ -549,3 +549,7 @@ def main():
     print_duration("Total Process")
 
     gmsh.finalize()
+
+
+if __name__ == "__main__":
+    main()
