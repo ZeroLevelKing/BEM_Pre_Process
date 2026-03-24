@@ -3,6 +3,9 @@
 ## 简介
 这是一个基于 Gmsh SDK 的 Python 高性能预处理脚本，专为复杂装配体几何设计。它自动化导入 STEP/IGES 几何文件、执行布尔运算修复几何、进行并行化 2D 三角形网格划分、校正表面单元法线方向，并输出按区域分类的数据文件及通用的可视化文件。
 
+## 新版架构 (Refactored)
+本项目已重构为模块化架构，核心逻辑分离至 `src/` 目录，通过 `main.py` 统一入口调用，提高了代码的可维护性和扩展性。
+
 ## 核心特性
 1.  **高性能几何处理**：
     *   **并行计算**：利用多核 CPU (`multiprocessing`) 加速网格生成。
@@ -23,12 +26,25 @@
 *   Gmsh SDK (`pip install gmsh`)
 *   NumPy (`pip install numpy`)
 
+## 项目结构
+```
+pre/
+├── main.py              # 主程序入口
+├── src/                 # 核心模块
+│   ├── geometry.py      # 几何计算与法线判定算法
+│   ├── mesh_processing.py # 网格处理逻辑 (BFS, Interface识别)
+│   ├── export.py        # 可视化文件导出
+│   └── logger.py        # 日志配置
+├── README.md            # 说明文档
+└── out/                 # 输出目录 (自动生成)
+```
+
 ## 使用方法
 
 ### 基本运行
 自动查找目录下几何文件，使用默认网格尺寸（1.0 ~ 3.0），默认仅输出 `.vtk`：
 ```bash
-python ff.py
+python main.py
 ```
 
 ### 命令行参数说明
@@ -44,18 +60,18 @@ python ff.py
 
 1.  **指定输入文件与网格尺寸**：
     ```bash
-    python ff.py --input engine.stp --size_min 0.5 --size_max 2.0
+    python main.py --input engine.stp --size_min 0.5 --size_max 2.0
     ```
 
 2.  **导出多种格式**：
     ```bash
     # 同时导出 VTK 和 MSH 文件
-    python ff.py --format "vtk, msh"
+    python main.py --format "vtk, msh"
     ```
 
 3.  **导出所有支持的格式**：
     ```bash
-    python ff.py --format all
+    python main.py --format all
     ```
 
 ## 输出文件结构
