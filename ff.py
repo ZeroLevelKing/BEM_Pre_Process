@@ -323,9 +323,20 @@ def main():
     parser.add_argument('--input', type=str, default=None, help='Input geometry file path (STEP, IGES, BREP)')
     parser.add_argument('--size_min', type=float, default=1.0, help='Minimum mesh element size')
     parser.add_argument('--size_max', type=float, default=10.0, help='Maximum mesh element size')
+    parser.add_argument('--format', type=str, default='stl', help='Export format (vtk, msh, stl, cgns, obj, all). Default: vtk')
 
     # Use parse_known_args to avoid conflict if other args are passed (though we might filter sys.argv for gmsh)
     args, unknown_args = parser.parse_known_args()
+
+    # Performance timing
+    t0 = time.time()
+    last_t = t0
+
+    def print_duration(step_name):
+        nonlocal last_t
+        current_t = time.time()
+        print(f"[{step_name}] took {current_t - last_t:.4f}s (Total: {current_t - t0:.4f}s)")
+        last_t = current_t
 
     setup_logging()
     print("Initializing Gmsh...")
@@ -348,6 +359,8 @@ def main():
 
     # 创建一个名为 "model_name" 的模型
     gmsh.model.add("model_name")
+
+    print_duration("Gmsh Initialization")
 
     # Determine input file
     geometry_file = None
@@ -400,6 +413,7 @@ def main():
 
     gmsh.model.occ.synchronize()
     print("Geometry loaded.")
+    print_duration("Geometry Loading")
 
     # 获取所有实体
     entities = gmsh.model.getEntities(dim=3)
@@ -417,12 +431,7 @@ def main():
         gmsh.model.occ.fragment(entities, [])
 
     gmsh.model.occ.synchronize()
-    # if '-nopopup' not in sys.argv:
-    # gmsh.fltk.run()
-    # 以上是注释内容
-
-    # gmsh.model.mesh.field.setNumber(2, "SizeMin", lc / 30)
-    # gmsh.model.mesh.field.setNumber(2, "SizeMax", lc)
+    print_duration("Geometry Processing")
     # gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 20)
     print(f"Setting Mesh Size: Min={args.size_min}, Max={args.size_max}")
     gmsh.option.setNumber("Mesh.MeshSizeMin", args.size_min)
@@ -434,16 +443,14 @@ def main():
 
     gmsh.model.mesh.generate(2)
     gmsh.model.occ.synchronize()
+    print_duration("Meshing")
 
     # Pre-calculation processing time estimation
     # Get all 2D elements to estimate workload
     _, all_elem_tags, _ = gmsh.model.mesh.getElements(2)
     total_2d_elements = sum(len(tags) for tags in all_elem_tags)
-
-    # Heuristic: 50,000 elements/sec for BFS and IO
-    estimated_time = total_2d_elements / 5000.0
     print(f"Total mesh elements: {total_2d_elements}")
-    print(f"Estimated post-processing time: {estimated_time:.2f} seconds")
+
 
     # if '-nopopup' not in sys.argv:
     # gmsh.fltk.run()
@@ -468,6 +475,7 @@ def main():
         for tag, xyz_e in zip(nodeTags, nodeCoords):
             xyz_e = ' '.join(str(i) for i in xyz_e)
             fnode.write(str(tag) + ' ' + str(xyz_e) + "\n")
+    print_duration("Writing Nodes")
 
     entities = gmsh.model.getEntities(3)
     zone = sum(len(e) for e in entities)
@@ -522,6 +530,7 @@ def main():
 
         for e in gmsh.model.getEntities(3):
             check_and_fix_orientation(e, finterface, felement, fzone, finter)
+    print_duration("Fixing Orientation & Writing Elements")
 
     # Stop logging thread
     stop_logging.set()
@@ -535,35 +544,45 @@ def main():
     print("Process completed successfully. Check 'out/' for results.")
 
     # 导出通用的可视化格式
-    print("Exporting visualization files to 'out/visual' (vtk, msh, stl, cgns, obj)...")
+    print(f"Exporting visualization files ({args.format}) to 'out/visual'...")
 
     # Ensure visualization directory exists
     visual_dir = os.path.join('out', 'visual')
     os.makedirs(visual_dir, exist_ok=True)
 
+    export_formats = []
+    if args.format == 'all':
+        export_formats = ['vtk', 'msh', 'stl', 'cgns', 'obj']
+    else:
+        # Allow comma separated input like "vtk,msh"
+        export_formats = [fmt.strip() for fmt in args.format.split(',')]
+
     # .vtk 文件通用性很强，Tecplot(通过插件) 和 ParaView 都能直接读取
-    gmsh.write(os.path.join(visual_dir, 'visualization.vtk'))
+    if 'vtk' in export_formats:
+        gmsh.write(os.path.join(visual_dir, 'visualization.vtk'))
+
     # .msh 是 Gmsh 原生格式，保留信息最全
-    gmsh.write(os.path.join(visual_dir, 'visualization.msh'))
+    if 'msh' in export_formats:
+        gmsh.write(os.path.join(visual_dir, 'visualization.msh'))
+
     # .stl 表面网格通用格式，MeshLab/SolidWorks 等常用
-    gmsh.write(os.path.join(visual_dir, 'visualization.stl'))
+    if 'stl' in export_formats:
+        gmsh.write(os.path.join(visual_dir, 'visualization.stl'))
+
     # .cgns CFD 通用格式，Tecplot 原生支持极佳
-    try:
-        gmsh.write(os.path.join(visual_dir, 'visualization.cgns'))
-    except Exception:
-        pass  # 忽略不支持 CGNS 的情况
+    if 'cgns' in export_formats:
+        try:
+            gmsh.write(os.path.join(visual_dir, 'visualization.cgns'))
+        except Exception:
+            pass  # 忽略不支持 CGNS 的情况
+
     # .obj 通用 3D 模型格式
-    gmsh.write(os.path.join(visual_dir, 'visualization.obj'))
+    if 'obj' in export_formats:
+        gmsh.write(os.path.join(visual_dir, 'visualization.obj'))
+
+    print_duration("Visualization Export")
+    print_duration("Total Process")
 
     # Visualization
     print("Opening Gmsh GUI for visualization...")
     gmsh.option.setNumber("Mesh.SurfaceFaces", 1)
-    gmsh.option.setNumber("Mesh.Normals", 20)  # Length of normal vectors
-    gmsh.option.setNumber("Mesh.ColorCarousel", 0)  # Standard color
-    gmsh.fltk.run()
-
-    gmsh.finalize()
-
-
-if __name__ == "__main__":
-    main()
