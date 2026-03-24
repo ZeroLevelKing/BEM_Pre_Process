@@ -7,6 +7,7 @@ import argparse
 import logging
 import threading
 import time
+import multiprocessing
 from collections import deque
 from typing import List, Tuple, Set, Dict, Optional
 
@@ -57,7 +58,7 @@ def find_max_x(surfaces):
         elemType, elemTag, elemNodeTag = gmsh.model.mesh.getElements(
             sur[0], abs(sur[1]))
         # Add a debug statement to check elemNodeTag
-        logging.info(f"Surface: {sur}, elemNodeTag: {elemNodeTag}")
+        # logging.info(f"Surface: {sur}, elemNodeTag: {elemNodeTag}")
 
        # Check if elemNodeTag is empty or properly structured
         if not elemNodeTag or len(
@@ -128,12 +129,12 @@ def adjust_triangle_orientation(reference_tri, tri, shared_edge):
     ref_idx1 = np.where(reference_tri == shared_edge[1])[0][0]
     tri_idx0 = np.where(tri == shared_edge[0])[0][0]
     tri_idx1 = np.where(tri == shared_edge[1])[0][0]
-    logging.info(f"gognxiang {ref_idx0} {ref_idx1} {tri_idx0} {tri_idx1}")
+    # logging.info(f"gognxiang {ref_idx0} {ref_idx1} {tri_idx0} {tri_idx1}")
     if (ref_idx0 + 1) % 3 == ref_idx1:
        # print("调整1")
         if (tri_idx0 + 1) % 3 == tri_idx1:
-            logging.info(
-                f"调整1 {tri} {tri[tri_idx1]} {tri[tri_idx0]} {tri[(tri_idx1 + 1) % 3]}")
+            # logging.info(
+                # f"调整1 {tri} {tri[tri_idx1]} {tri[tri_idx0]} {tri[(tri_idx1 + 1) % 3]}")
             return [tri[tri_idx1], tri[tri_idx0], tri[(tri_idx1 + 1) % 3]]
             # 方向相同，不需要调整
         else:
@@ -144,8 +145,8 @@ def adjust_triangle_orientation(reference_tri, tri, shared_edge):
        # print("调整2")
         if (tri_idx1 + 1) % 3 == tri_idx0:
             # if(tri_idx0 + 1) % 3 != tri_idx1:
-            logging.info(
-                f"调整2 {tri} {tri[tri_idx0]} {tri[tri_idx1]} {tri[(tri_idx0 + 1) % 3]}")
+            # logging.info(
+                # f"调整2 {tri} {tri[tri_idx0]} {tri[tri_idx1]} {tri[(tri_idx0 + 1) % 3]}")
             return [tri[tri_idx0], tri[tri_idx1],
                     tri[(tri_idx0 + 1) % 3]]  # 方向相反，需要调整
 
@@ -252,7 +253,7 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
         max_x_elem_coords,
         max_x_elem_normal,
         max_x_elem_center)
-    logging.info(f"max: {max_x_elem}")
+    # logging.info(f"max: {max_x_elem}")
     if inward:
         max_x_elem = max_x_elem[::-1]
 
@@ -317,10 +318,12 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
 
 
 def main():
-    # Parse command line arguments for mesh sizing
+    # Parse command line arguments for mesh sizing and input file
     parser = argparse.ArgumentParser(description="Gmsh Mesh Generator")
+    parser.add_argument('--input', type=str, default=None, help='Input geometry file path (STEP, IGES, BREP)')
     parser.add_argument('--size_min', type=float, default=1.0, help='Minimum mesh element size')
     parser.add_argument('--size_max', type=float, default=10.0, help='Maximum mesh element size')
+
     # Use parse_known_args to avoid conflict if other args are passed (though we might filter sys.argv for gmsh)
     args, unknown_args = parser.parse_known_args()
 
@@ -328,6 +331,11 @@ def main():
     print("Initializing Gmsh...")
     # Initialize Gmsh with only the script name to avoid parsing our custom arguments
     gmsh.initialize([sys.argv[0]] + unknown_args)
+
+    # Enable parallel computing
+    num_threads = multiprocessing.cpu_count()
+    print(f"Enabling parallel computing with {num_threads} threads.")
+    gmsh.option.setNumber("General.NumThreads", num_threads)
 
     # 拦截 Gmsh 的终端输出，改为记录到日志
     gmsh.option.setNumber("General.Terminal", 0)
@@ -341,21 +349,52 @@ def main():
     # 创建一个名为 "model_name" 的模型
     gmsh.model.add("model_name")
 
-    # Load a STEP file (using `importShapes' instead of `merge' allows to directly
-    # retrieve the tags of the highest dimensional imported entities):
-    path = os.path.dirname(os.path.abspath(__file__))
-
-    # 【修改处】: 使用 importShapes 导入外部几何文件，而非创建 Box
-    # 请将 'model_name.step' 替换为你实际的几何文件名 (支持 .step, .stp, .brep 等)
-    geometry_file = os.path.join(path, 'tsv.stp')
-
-    if os.path.exists(geometry_file):
-       # importShapes 会读取文件并返回生成的实体标签
-        gmsh.model.occ.importShapes(geometry_file)
+    # Determine input file
+    geometry_file = None
+    if args.input:
+        geometry_file = args.input
     else:
-        print(f"Error: Geometry file '{geometry_file}' not found.")
-        # 为了防止后续代码报错，这里可以选择退出，或者你可以保留下面的测试用 Box 代码作为 fallback
-        # return
+        # Default strategy: search for common geometry files in script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Priority order: STEP > IGES > BREP
+        potential_files = [
+            os.path.join(script_dir, 'tsv.stp'),
+            os.path.join(script_dir, 'tsv.step'),
+            os.path.join(script_dir, 'model.stp'),
+            os.path.join(script_dir, 'geom.iges'),
+            os.path.join(script_dir, 'geom.igs'),
+        ]
+
+        # Also scan directory for any .stp/.step/.igs/.iges/.brep file if specific named ones aren't found
+        if not any(os.path.exists(f) for f in potential_files):
+            for file in os.listdir(script_dir):
+                if file.lower().endswith(('.stp', '.step', '.igs', '.iges', '.brep')):
+                    potential_files.append(os.path.join(script_dir, file))
+                    break
+
+        for f in potential_files:
+            if os.path.exists(f):
+                geometry_file = f
+                break
+
+    if geometry_file and os.path.exists(geometry_file):
+        print(f"Loading geometry file: {geometry_file}")
+        try:
+            # importShapes supports STEP, IGES, BREP natively via OpenCASCADE
+            # Note: .sat (ACIS) is generally NOT supported in open-source Gmsh builds.
+            gmsh.model.occ.importShapes(geometry_file)
+        except Exception as e:
+            print(f"Error importing geometry: {e}")
+            logging.error(f"Error importing geometry: {e}")
+            # Fallback or exit could happen here
+    else:
+        if args.input:
+             print(f"Error: Specified input file '{geometry_file}' not found.")
+        else:
+             print("Error: No suitable geometry file found in directory.")
+
+        # Fallback for testing/demonstration if no file is found
+        print("Using fallback internal box geometry for demonstration...")
         gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
         gmsh.model.occ.addBox(2, 0, 0, 1, 1, 1)
 
@@ -369,11 +408,14 @@ def main():
 
     # 遍历所有实体进行分割
     print("Processing geometry fragments...")
-    # 遍历所有实体进行分割
-    for i in range(len(entities)):
-        rest_entities = entities[i + 1:]
-        if rest_entities:
-            gmsh.model.occ.fragment([entities[i]], rest_entities)
+
+    # 以前的循环写法是 O(N^2)，非常慢。
+    # 改为一次性 fragment 操作，将 entitys 列表中的所有实体进行相互分割和压印
+    if len(entities) > 0:
+        # fragment 的前两个参数分别是 objectDimTags 和 toolDimTags。
+        # 这里把所有实体都放进去，让 Gmsh/OCC 内核一次性计算所有交集关系。
+        gmsh.model.occ.fragment(entities, [])
+
     gmsh.model.occ.synchronize()
     # if '-nopopup' not in sys.argv:
     # gmsh.fltk.run()
@@ -386,6 +428,10 @@ def main():
     gmsh.option.setNumber("Mesh.MeshSizeMin", args.size_min)
     print("Generating mesh...")
     gmsh.option.setNumber("Mesh.MeshSizeMax", args.size_max)
+
+    # Enable Frontal-Delaunay for 2D meshing (Algorithm ID=6) for faster and better quality
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+
     gmsh.model.mesh.generate(2)
     gmsh.model.occ.synchronize()
 
