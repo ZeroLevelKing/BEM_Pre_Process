@@ -57,8 +57,6 @@ def find_max_x(surfaces):
     for sur in surfaces:
         elemType, elemTag, elemNodeTag = gmsh.model.mesh.getElements(
             sur[0], abs(sur[1]))
-        # Add a debug statement to check elemNodeTag
-        # logging.info(f"Surface: {sur}, elemNodeTag: {elemNodeTag}")
 
        # Check if elemNodeTag is empty or properly structured
         if not elemNodeTag or len(
@@ -129,30 +127,20 @@ def adjust_triangle_orientation(reference_tri, tri, shared_edge):
     ref_idx1 = np.where(reference_tri == shared_edge[1])[0][0]
     tri_idx0 = np.where(tri == shared_edge[0])[0][0]
     tri_idx1 = np.where(tri == shared_edge[1])[0][0]
-    # logging.info(f"gognxiang {ref_idx0} {ref_idx1} {tri_idx0} {tri_idx1}")
+
     if (ref_idx0 + 1) % 3 == ref_idx1:
-       # print("调整1")
         if (tri_idx0 + 1) % 3 == tri_idx1:
-            # logging.info(
-                # f"调整1 {tri} {tri[tri_idx1]} {tri[tri_idx0]} {tri[(tri_idx1 + 1) % 3]}")
+            # 方向相同，需要反转
             return [tri[tri_idx1], tri[tri_idx0], tri[(tri_idx1 + 1) % 3]]
-            # 方向相同，不需要调整
         else:
-            # 方向相反，需要调整
-            #  print("mei1111")
+            # 方向相反，不需要调整
             return tri
     else:
-       # print("调整2")
         if (tri_idx1 + 1) % 3 == tri_idx0:
-            # if(tri_idx0 + 1) % 3 != tri_idx1:
-            # logging.info(
-                # f"调整2 {tri} {tri[tri_idx0]} {tri[tri_idx1]} {tri[(tri_idx0 + 1) % 3]}")
+            # 方向相反，不需要调整
             return [tri[tri_idx0], tri[tri_idx1],
-                    tri[(tri_idx0 + 1) % 3]]  # 方向相反，需要调整
-
-            # return tri  # 方向相同，不需要调整
+                    tri[(tri_idx0 + 1) % 3]]
         else:
-            # print("mei222222")
             return tri
 
 
@@ -253,7 +241,7 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
         max_x_elem_coords,
         max_x_elem_normal,
         max_x_elem_center)
-    # logging.info(f"max: {max_x_elem}")
+
     if inward:
         max_x_elem = max_x_elem[::-1]
 
@@ -314,15 +302,13 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter):
                                str(abs(e[1])) +
                                "\n")
 
-    # fzone.write(str(len(surface)) + "\n")
-
 
 def main():
     # Parse command line arguments for mesh sizing and input file
     parser = argparse.ArgumentParser(description="Gmsh Mesh Generator")
     parser.add_argument('--input', type=str, default=None, help='Input geometry file path (STEP, IGES, BREP)')
     parser.add_argument('--size_min', type=float, default=1.0, help='Minimum mesh element size')
-    parser.add_argument('--size_max', type=float, default=10.0, help='Maximum mesh element size')
+    parser.add_argument('--size_max', type=float, default=3.0, help='Maximum mesh element size')
     parser.add_argument('--format', type=str, default='stl', help='Export format (vtk, msh, stl, cgns, obj, all). Default: vtk')
 
     # Use parse_known_args to avoid conflict if other args are passed (though we might filter sys.argv for gmsh)
@@ -418,16 +404,9 @@ def main():
     # 获取所有实体
     entities = gmsh.model.getEntities(dim=3)
 
-    # 遍历所有f"Number of entities found: {len(entities)}")
-
-    # 遍历所有实体进行分割
     print("Processing geometry fragments...")
 
-    # 以前的循环写法是 O(N^2)，非常慢。
-    # 改为一次性 fragment 操作，将 entitys 列表中的所有实体进行相互分割和压印
     if len(entities) > 0:
-        # fragment 的前两个参数分别是 objectDimTags 和 toolDimTags。
-        # 这里把所有实体都放进去，让 Gmsh/OCC 内核一次性计算所有交集关系。
         gmsh.model.occ.fragment(entities, [])
 
     gmsh.model.occ.synchronize()
@@ -451,15 +430,8 @@ def main():
     total_2d_elements = sum(len(tags) for tags in all_elem_tags)
     print(f"Total mesh elements: {total_2d_elements}")
 
-
-    # if '-nopopup' not in sys.argv:
-    # gmsh.fltk.run()
-
     nodeTags, nodeCoords, nodeParams = gmsh.model.mesh.getNodes()
 
-    # nodeCoords = nodeCoords.reshape((-1, 3))
-    # reshape is not a method of list, nodeCoords is a numpy array if numpy is used correctly.
-    # However, gmsh returns a flat list/array, so we need to convert it to numpy array first if it's not.
     nodeCoords = np.array(nodeCoords).reshape((-1, 3))
 
     # Ensure out directory exists
@@ -518,14 +490,7 @@ def main():
         finterface.write(str(i) + "\n")
         felement.write(str(numElem - int(boundary / 2)) + "\n")
         felement.write(str(int(boundary / 2)) + "\n")
-        surface = gmsh.model.getBoundary([e])
-        # max_x_point, max_x_elem, max_x_elem_coords, max_x_elem_normal, max_x_elem_center = find_max_x(surface)
-        # inward = determine_orientation(max_x_point, max_x_elem, max_x_elem_coords, max_x_elem_normal, max_x_elem_center)
-        # print("max:",max_x_elem)
-        # if inward:
-        #     max_x_elem = max_x_elem[::-1]
 
-        # corrected_elements = bfs_fix_orientation(max_x_elem, surface)
         print("Fixing element orientation and writing output files...")
 
         for e in gmsh.model.getEntities(3):
@@ -583,6 +548,4 @@ def main():
     print_duration("Visualization Export")
     print_duration("Total Process")
 
-    # Visualization
-    print("Opening Gmsh GUI for visualization...")
-    gmsh.option.setNumber("Mesh.SurfaceFaces", 1)
+    gmsh.finalize()
