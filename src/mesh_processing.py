@@ -2,6 +2,7 @@ import gmsh
 import numpy as np
 import logging
 import os
+import time
 from collections import deque
 from src.geometry import (
     find_max_x,
@@ -183,3 +184,49 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=N
                                " " +
                                str(abs(e[1])) +
                                "\n")
+
+
+def run_bfs_orientation_pass(volume_entities=None):
+    """
+    Run only the BFS orientation propagation stage for all 3D entities.
+
+    Returns a dict with timing and count metrics, where `bfs_seconds` is the
+    accumulated pure BFS propagation time (excluding file I/O and mesh writing).
+    """
+    if volume_entities is None:
+        volume_entities = gmsh.model.getEntities(3)
+
+    bfs_seconds = 0.0
+    skipped_entities = 0
+    corrected_elements = 0
+
+    for e in volume_entities:
+        surface = gmsh.model.getBoundary([e])
+        max_x_point, max_x_elem, max_x_elem_coords, max_x_elem_normal, max_x_elem_center = find_max_x(surface)
+
+        if max_x_elem is None:
+            skipped_entities += 1
+            continue
+
+        inward = determine_orientation(
+            max_x_point,
+            max_x_elem,
+            max_x_elem_coords,
+            max_x_elem_normal,
+            max_x_elem_center,
+        )
+
+        if inward:
+            max_x_elem = max_x_elem[::-1]
+
+        t0 = time.perf_counter()
+        corrected = bfs_fix_orientation(max_x_elem, surface)
+        bfs_seconds += time.perf_counter() - t0
+        corrected_elements += len(corrected)
+
+    return {
+        "bfs_seconds": bfs_seconds,
+        "volume_entities": len(volume_entities),
+        "skipped_entities": skipped_entities,
+        "corrected_elements": corrected_elements,
+    }
