@@ -6,9 +6,15 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 import gmsh
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -24,6 +30,59 @@ def flush_gmsh_logs():
             logging.info(f"Gmsh: {msg}")
     except Exception:
         pass
+
+
+class MemoryMonitor:
+    """Samples process RSS (resident set size) in a background thread, recording
+    the peak observed during the monitoring window.
+
+    Uses ``psutil`` when available; otherwise degrades gracefully (peak_rss_mb
+    returns 0.0).
+    """
+
+    def __init__(self, pid=None):
+        self._pid = pid or os.getpid()
+        self._peak_bytes = 0
+        self._stop = threading.Event()
+        self._thread = None
+        self._process = None
+
+    def start(self, pid=None, interval=0.1):
+        """Begin sampling *pid* (defaults to the PID passed to the constructor)."""
+        if psutil is None:
+            return
+        target_pid = pid or self._pid
+        try:
+            self._process = psutil.Process(target_pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._poll, args=(interval,), daemon=True)
+        self._thread.start()
+
+    def _poll(self, interval):
+        try:
+            while not self._stop.is_set():
+                try:
+                    rss = self._process.memory_info().rss
+                    if rss > self._peak_bytes:
+                        self._peak_bytes = rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    break
+                self._stop.wait(interval)
+        except Exception:
+            pass
+
+    def stop(self):
+        """Stop sampling and return the peak RSS in MiB."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+        return self.peak_rss_mb
+
+    @property
+    def peak_rss_mb(self):
+        return round(self._peak_bytes / (1024 * 1024), 2)
 
 
 def parse_targets(value: str):
@@ -185,10 +244,13 @@ def find_size_for_target(
 
 def run_case_internal(geometry_file: str, target_faces: int, mesh_size: float):
     model_name = f"case_{target_faces}"
+    monitor = MemoryMonitor()
+    monitor.start()
     t0 = time.perf_counter()
     actual_faces = import_and_mesh(geometry_file, mesh_size, model_name)
     bfs_stats = run_bfs_orientation_pass(gmsh.model.getEntities(3))
     total_seconds = time.perf_counter() - t0
+    peak_rss_mb = monitor.stop()
 
     return {
         "target_faces": target_faces,
@@ -200,6 +262,7 @@ def run_case_internal(geometry_file: str, target_faces: int, mesh_size: float):
         "volume_entities": bfs_stats["volume_entities"],
         "skipped_entities": bfs_stats["skipped_entities"],
         "corrected_elements": bfs_stats["corrected_elements"],
+        "peak_rss_mb": peak_rss_mb,
         "runner": "internal",
         "bfs_source": "pure_bfs",
     }
@@ -231,19 +294,23 @@ def run_case_via_main(geometry_file: str, target_faces: int, mesh_size: float, s
         "msh",
     ]
 
+    monitor = MemoryMonitor()
     t0 = time.perf_counter()
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
         cwd=root_dir,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        check=False,
     )
+    monitor.start(pid=proc.pid)
+    stdout, stderr = proc.communicate()
+    peak_rss_mb = monitor.stop()
     total_seconds = time.perf_counter() - t0
 
-    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    combined = (stdout or "") + "\n" + (stderr or "")
     if show_gmsh_terminal:
         print(combined)
 
@@ -266,6 +333,7 @@ def run_case_via_main(geometry_file: str, target_faces: int, mesh_size: float, s
         "volume_entities": -1,
         "skipped_entities": -1,
         "corrected_elements": -1,
+        "peak_rss_mb": peak_rss_mb,
         "runner": "main",
         "bfs_source": "main_stage_with_io",
     }
@@ -366,6 +434,7 @@ def main():
             "total_seconds",
             "bfs_seconds",
             "bfs_ratio",
+            "peak_rss_mb",
             "runner",
             "bfs_source",
             "volume_entities",
@@ -429,8 +498,9 @@ def main():
                 writer.writerow(row)
 
             print(
-                f"[Target {target}] total={row['total_seconds']:.4f}s, "
-                f"bfs={row['bfs_seconds']:.4f}s, faces={row['actual_faces']}"
+                f"[Target {target}] total={row['total_seconds']:.2f}s, "
+                f"bfs={row['bfs_seconds']:.2f}s, faces={row['actual_faces']}, "
+                f"peak_rss={row['peak_rss_mb']:.0f}MiB"
             )
 
     finally:
