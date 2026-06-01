@@ -71,33 +71,79 @@ def find_size_for_target(
     size_high: float,
     max_iter: int,
     rel_tol: float,
+    cache: dict = None,
+    cache_csv_path: str = None,
 ):
+    if cache is None:
+        cache = {}
+
     model_name = f"tune_{target_faces}"
     history = []
 
-    low_faces = import_and_mesh(geometry_file, size_low, model_name)
-    history.append({
-        "target_faces": target_faces,
-        "phase": "bound",
-        "iter_index": -2,
-        "mesh_size": size_low,
-        "faces": low_faces,
-        "abs_error": abs(low_faces - target_faces),
-        "rel_error": abs(low_faces - target_faces) / float(target_faces),
-        "note": "size_low",
-    })
+    def evaluate_sz(sz, iter_idx, phase_note):
+        size_key = round(sz, 6)
+        is_new_eval = False
+        if size_key not in cache:
+            faces = import_and_mesh(geometry_file, sz, model_name)
+            cache[size_key] = faces
+            is_new_eval = True
+        else:
+            faces = cache[size_key]
 
-    high_faces = import_and_mesh(geometry_file, size_high, model_name)
-    history.append({
-        "target_faces": target_faces,
-        "phase": "bound",
-        "iter_index": -1,
-        "mesh_size": size_high,
-        "faces": high_faces,
-        "abs_error": abs(high_faces - target_faces),
-        "rel_error": abs(high_faces - target_faces) / float(target_faces),
-        "note": "size_high",
-    })
+        if is_new_eval and cache_csv_path:
+            # Append immediately to CSV so we safely persist running data
+            write_header = not os.path.exists(cache_csv_path)
+            with open(cache_csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(["mesh_size", "faces"])
+                writer.writerow([size_key, faces])
+
+        err = abs(faces - target_faces)
+        rel_err = err / float(target_faces)
+        history.append({
+            "target_faces": target_faces,
+            "phase": phase_note,
+            "iter_index": iter_idx,
+            "mesh_size": sz,
+            "faces": faces,
+            "abs_error": err,
+            "rel_error": rel_err,
+            "note": phase_note if "bound" in phase_note else ("cache_hit" if not is_new_eval else ""),
+        })
+        return faces, err, rel_err
+
+    # Find tightest bounds from cache
+    current_size_low = size_low
+    current_size_high = size_high
+
+    # For size_low (smaller size -> more faces), we want the maximum size in cache that still yields >= target_faces
+    valid_lower = [s for s, f in cache.items() if f >= target_faces and s >= size_low]
+    if valid_lower:
+        current_size_low = max(valid_lower)
+
+    # For size_high (larger size -> fewer faces), we want the minimum size in cache that still yields <= target_faces
+    valid_upper = [s for s, f in cache.items() if f <= target_faces and s <= size_high]
+    if valid_upper:
+        current_size_high = min(valid_upper)
+
+    if current_size_low >= current_size_high:
+        current_size_low = size_low
+        current_size_high = size_high
+
+    # Quickly check if the best point in cache already satisfies rel_tol
+    best_c_size, best_c_err = None, float('inf')
+    for s, f in cache.items():
+        if abs(f - target_faces) < best_c_err:
+            best_c_err = abs(f - target_faces)
+            best_c_size = s
+
+    if best_c_size is not None and (best_c_err / float(target_faces)) <= rel_tol:
+        faces, _, _ = evaluate_sz(best_c_size, -3, "cache_hit")
+        return best_c_size, faces, "ok_from_cache", history
+
+    low_faces, _, _ = evaluate_sz(current_size_low, -2, "bound_low")
+    high_faces, _, _ = evaluate_sz(current_size_high, -1, "bound_high")
 
     if low_faces < high_faces:
         raise RuntimeError(
@@ -106,34 +152,21 @@ def find_size_for_target(
         )
 
     if target_faces > low_faces:
-        return size_low, low_faces, "target_above_max_density", history
+        return current_size_low, low_faces, "target_above_max_density", history
 
     if target_faces < high_faces:
-        return size_high, high_faces, "target_below_min_density", history
+        return current_size_high, high_faces, "target_below_min_density", history
 
-    best_size = size_low
+    best_size = current_size_low
     best_faces = low_faces
     best_err = abs(low_faces - target_faces)
 
-    lo = size_low
-    hi = size_high
+    lo = current_size_low
+    hi = current_size_high
 
     for i in range(max_iter):
         mid = (lo + hi) * 0.5
-        faces = import_and_mesh(geometry_file, mid, model_name)
-
-        err = abs(faces - target_faces)
-        rel_err = err / float(target_faces)
-        history.append({
-            "target_faces": target_faces,
-            "phase": "binary",
-            "iter_index": i,
-            "mesh_size": mid,
-            "faces": faces,
-            "abs_error": err,
-            "rel_error": rel_err,
-            "note": "",
-        })
+        faces, err, rel_err = evaluate_sz(mid, i, "binary")
 
         if err < best_err:
             best_err = err
@@ -273,6 +306,11 @@ def main():
         help="CSV output path for all binary-search probe points",
     )
     parser.add_argument(
+        "--cache-file",
+        default=os.path.join("out", "benchmarks", "mesh_size_cache.csv"),
+        help="CSV path to persist mesh size to faces mapping cache",
+    )
+    parser.add_argument(
         "--show-gmsh-terminal",
         action="store_true",
         help="Show raw Gmsh terminal logs (default: intercept and write to out/log/process.log)",
@@ -286,8 +324,11 @@ def main():
     targets = parse_targets(args.targets)
     output_path = os.path.abspath(args.output)
     output_search_path = os.path.abspath(args.output_search)
+    cache_csv_path = os.path.abspath(args.cache_file)
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     os.makedirs(os.path.dirname(output_search_path), exist_ok=True)
+    os.makedirs(os.path.dirname(cache_csv_path), exist_ok=True)
 
     setup_logging()
     gmsh.initialize([sys.argv[0]])
@@ -297,6 +338,21 @@ def main():
 
     rows = []
     search_rows = []
+    global_eval_cache = {}  # Cache map {size: faces} to dramatically speed up target jumps
+
+    # Load existing cache from CSV if it exists
+    if os.path.exists(cache_csv_path):
+        try:
+            with open(cache_csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    sz = round(float(row["mesh_size"]), 6)
+                    fc = int(row["faces"])
+                    global_eval_cache[sz] = fc
+            print(f"Loaded {len(global_eval_cache)} cached points from {cache_csv_path}")
+        except Exception as e:
+            print(f"Warning: Failed to load cache from {cache_csv_path}: {e}")
+
     try:
         print("Starting BFS scaling benchmark...")
         print(f"Input: {geometry_file}")
@@ -311,6 +367,8 @@ def main():
                 size_high=args.size_high,
                 max_iter=args.max_iter,
                 rel_tol=args.rel_tol,
+                cache=global_eval_cache,
+                cache_csv_path=cache_csv_path
             )
             search_rows.extend(fit_history)
             print(
