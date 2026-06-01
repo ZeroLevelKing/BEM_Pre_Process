@@ -358,6 +358,41 @@ def main():
         print(f"Input: {geometry_file}")
         print(f"Targets: {targets}")
 
+        fieldnames = [
+            "target_faces",
+            "actual_faces",
+            "mesh_size",
+            "fit_status",
+            "total_seconds",
+            "bfs_seconds",
+            "bfs_ratio",
+            "runner",
+            "bfs_source",
+            "volume_entities",
+            "skipped_entities",
+            "corrected_elements",
+        ]
+
+        search_fieldnames = [
+            "target_faces",
+            "phase",
+            "iter_index",
+            "mesh_size",
+            "faces",
+            "abs_error",
+            "rel_error",
+            "note",
+        ]
+
+        # Initialize CSV files with headers
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+
+        with open(output_search_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=search_fieldnames)
+            writer.writeheader()
+
         for target in targets:
             print(f"\n[Target {target}] fitting mesh size...")
             size, fitted_faces, fit_status, fit_history = find_size_for_target(
@@ -370,7 +405,12 @@ def main():
                 cache=global_eval_cache,
                 cache_csv_path=cache_csv_path
             )
-            search_rows.extend(fit_history)
+
+            # Immediately append search history for this target
+            with open(output_search_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=search_fieldnames)
+                writer.writerows(fit_history)
+
             print(
                 f"[Target {target}] fit result: size={size:.6g}, "
                 f"faces={fitted_faces}, status={fit_status}"
@@ -382,7 +422,12 @@ def main():
             else:
                 row = run_case_internal(geometry_file, target, size)
             row["fit_status"] = fit_status
-            rows.append(row)
+
+            # Immediately append the final result row for this target
+            with open(output_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writerow(row)
+
             print(
                 f"[Target {target}] total={row['total_seconds']:.4f}s, "
                 f"bfs={row['bfs_seconds']:.4f}s, faces={row['actual_faces']}"
@@ -392,41 +437,6 @@ def main():
         flush_gmsh_logs()
         gmsh.logger.stop()
         gmsh.finalize()
-
-    fieldnames = [
-        "target_faces",
-        "actual_faces",
-        "mesh_size",
-        "fit_status",
-        "total_seconds",
-        "bfs_seconds",
-        "bfs_ratio",
-        "runner",
-        "bfs_source",
-        "volume_entities",
-        "skipped_entities",
-        "corrected_elements",
-    ]
-
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    search_fieldnames = [
-        "target_faces",
-        "phase",
-        "iter_index",
-        "mesh_size",
-        "faces",
-        "abs_error",
-        "rel_error",
-        "note",
-    ]
-    with open(output_search_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=search_fieldnames)
-        writer.writeheader()
-        writer.writerows(search_rows)
 
     print(f"\nBenchmark finished. CSV written to: {output_path}")
     print(f"Binary-search history CSV written to: {output_search_path}")
