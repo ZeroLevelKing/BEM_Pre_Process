@@ -19,7 +19,7 @@ def main():
     parser.add_argument('--input', type=str, default=None, help='Input geometry file path (STEP, IGES, BREP)')
     parser.add_argument('--size_min', type=float, default=1.0, help='Minimum mesh element size')
     parser.add_argument('--size_max', type=float, default=3.0, help='Maximum mesh element size')
-    parser.add_argument('--format', type=str, default='msh', help='Export format (vtk, msh, cgns, obj, all). Default: msh')
+    parser.add_argument('--format', type=str, default='none', help='Export format (none, vtk, msh, cgns, obj, all). Default: none')
 
     # Use parse_known_args to avoid conflict if other args are passed (though we might filter sys.argv for gmsh)
     args, unknown_args = parser.parse_known_args()
@@ -137,8 +137,12 @@ def main():
 
             nodeCoords = np.array(nodeCoords).reshape((-1, 3))
 
+            # Create a versioned name containing mesh sizing and timestamp to avoid overwriting
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            versioned_name = f"{model_name}_min{args.size_min}_max{args.size_max}_{timestamp}"
+
             # Save data files in per-model directory to avoid overwriting
-            data_dir = os.path.join(data_root_dir, model_name)
+            data_dir = os.path.join(data_root_dir, versioned_name)
             os.makedirs(data_dir, exist_ok=True)
 
             print("Writing nodes to file...")
@@ -214,8 +218,8 @@ def main():
 
             print("Process completed successfully. Check 'out/' for results.")
 
-            # Export visualization with per-file basename, e.g. xxx.msh
-            export_visualization(args.format, visual_dir, model_name)
+            # Export visualization with per-file basename, e.g. xxx_min1.0_max3.0_timestamp.msh
+            export_visualization(args.format, visual_dir, versioned_name)
 
             print_duration(f"{model_name} Visualization Export")
 

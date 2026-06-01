@@ -4,8 +4,12 @@ import gmsh
 def export_visualization(format_arg, output_dir='out/visual', output_basename='visualization'):
     """
     Exports the current Gmsh model to various visualization formats based on the format_arg.
-    Supported formats: 'vtk', 'msh', 'cgns', 'obj' or 'all'.
+    Supported formats: 'none', 'vtk', 'msh', 'cgns', 'obj' or 'all'.
     """
+    if format_arg.lower() == 'none':
+        print("Visualization export is disabled ('none'). Skipping...")
+        return
+
     # Ensure visualization directory exists
     os.makedirs(output_dir, exist_ok=True)
 
