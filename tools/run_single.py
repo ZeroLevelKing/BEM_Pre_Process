@@ -27,42 +27,11 @@ if ROOT_DIR not in sys.path:
 from benchmark_bfs_scaling import (
     flush_gmsh_logs,
     import_and_mesh,
-    run_case_internal,
     run_case_via_main,
+    MemoryMonitor,
 )
+from src.mesh_processing import run_bfs_orientation_pass
 from src.logger import setup_logging
-
-
-def load_mesh_size_cache(cache_csv_path: str) -> dict:
-    """Load existing mesh_size -> faces mapping from CSV."""
-    cache = {}
-    if os.path.exists(cache_csv_path):
-        try:
-            with open(cache_csv_path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    sz = round(float(row["mesh_size"]), 6)
-                    fc = int(row["faces"])
-                    cache[sz] = fc
-            print(f"Loaded {len(cache)} cached points from {cache_csv_path}")
-        except Exception as e:
-            print(f"Warning: Failed to load cache from {cache_csv_path}: {e}")
-    return cache
-
-
-def append_cache_entry(cache_csv_path: str, mesh_size: float, faces: int, cache: dict):
-    """Write a new (mesh_size, faces) entry to cache CSV if not already present."""
-    size_key = round(mesh_size, 6)
-    if size_key in cache:
-        return
-    cache[size_key] = faces
-    write_header = not os.path.exists(cache_csv_path)
-    os.makedirs(os.path.dirname(cache_csv_path), exist_ok=True)
-    with open(cache_csv_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if write_header:
-            writer.writerow(["mesh_size", "faces"])
-        writer.writerow([size_key, faces])
 
 
 def _resolve_fieldnames(output_path: str, default_fieldnames: list) -> list:
@@ -142,11 +111,6 @@ def main():
         help="CSV output path for search-history row",
     )
     parser.add_argument(
-        "--cache-file",
-        default=os.path.join("out", "benchmarks", "mesh_size_cache.csv"),
-        help="CSV path for mesh size → faces cache",
-    )
-    parser.add_argument(
         "--threads", type=int, default=multiprocessing.cpu_count(),
         help="Gmsh thread count (default: all CPU cores)",
     )
@@ -162,7 +126,6 @@ def main():
 
     output_path = os.path.abspath(args.output)
     output_search_path = os.path.abspath(args.output_search)
-    cache_csv_path = os.path.abspath(args.cache_file)
     label = args.label if args.label is not None else f"size={args.size:.6g}"
 
     setup_logging()
@@ -170,9 +133,6 @@ def main():
     gmsh.option.setNumber("General.Terminal", 1 if args.show_gmsh_terminal else 0)
     gmsh.option.setNumber("General.NumThreads", max(1, args.threads))
     gmsh.logger.start()
-
-    # Load existing cache
-    cache = load_mesh_size_cache(cache_csv_path)
 
     # Match benchmark_bfs_scaling.py fieldnames so CSVs stay mergeable
     result_fieldnames = [
@@ -190,19 +150,40 @@ def main():
         print(f"Single-point benchmark: size={args.size:.6g}, input={geometry_file}")
         print(f"Runner: {args.runner}")
 
-        # Step 1: Mesh at the specified size
-        model_name = f"single_{args.size:.6g}"
-        actual_faces = import_and_mesh(geometry_file, args.size, model_name)
-        print(f"Meshed {actual_faces} faces at mesh_size={args.size:.6g}")
-
-        # Step 2: Persist to cache
-        append_cache_entry(cache_csv_path, args.size, actual_faces, cache)
-
-        # Step 3: Run timed case
         if args.runner == "main":
+            # --- main runner: spawn main.py as subprocess (mesh + orient + I/O) ---
             row = run_case_via_main(geometry_file, label, args.size, args.show_gmsh_terminal)
+            actual_faces = row["actual_faces"]
         else:
-            row = run_case_internal(geometry_file, label, args.size)
+            # --- internal runner: mesh once, then pure BFS orientation pass ---
+            model_name = f"single_{args.size:.6g}"
+            monitor = MemoryMonitor()
+            monitor.start()
+            t0 = time.perf_counter()
+            actual_faces = import_and_mesh(geometry_file, args.size, model_name)
+            bfs_stats = run_bfs_orientation_pass(gmsh.model.getEntities(3))
+            total_seconds = time.perf_counter() - t0
+            peak_rss_mb = monitor.stop()
+            print(f"Meshed {actual_faces} faces at mesh_size={args.size:.6g}")
+
+            row = {
+                "target_faces": label,
+                "actual_faces": actual_faces,
+                "mesh_size": args.size,
+                "total_seconds": total_seconds,
+                "bfs_seconds": bfs_stats["bfs_seconds"],
+                "bfs_ratio": (
+                    bfs_stats["bfs_seconds"] / total_seconds
+                    if total_seconds > 0
+                    else 0.0
+                ),
+                "peak_rss_mb": peak_rss_mb,
+                "volume_entities": bfs_stats["volume_entities"],
+                "skipped_entities": bfs_stats["skipped_entities"],
+                "corrected_elements": bfs_stats["corrected_elements"],
+                "runner": "internal",
+                "bfs_source": "pure_bfs",
+            }
         row["fit_status"] = "direct"
 
         # Step 4: Append result row
