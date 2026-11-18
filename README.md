@@ -87,7 +87,7 @@ python main.py
 | **elements.txt**  | **外部边界**单元列表。包含经过法线校正的三角形单元。           |
 | **interface.txt** | **内部交界面**单元列表。记录不同体（Volume）之间接触面的网格。 |
 | **inter.txt**     | 内部交界面索引表。                                             |
-| **zone.txt**      | 区域统计信息（各 Volume 的单元数量）。                         |
+| **zone.txt**      | 首行为子域数量，随后为各 Volume 的单元数量，最后为从 1 开始的子域处理顺序（默认按文件中的子域顺序）。 |
 
 ### 2. `out/visual/` (可视化模型)
 根据 `--format` 参数生成，可直接拖入 Tecplot, ParaView, MeshLab 查看。

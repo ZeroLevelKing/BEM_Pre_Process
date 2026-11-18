@@ -192,6 +192,10 @@ def main():
                             i += 1 # Counting interface surfaces?
                     fzone.write(str(Elem) + "\n")
 
+                # The solver reads a 1-based subdomain processing order after the counts.
+                for zone_id in range(1, len(entities) + 1):
+                    fzone.write(str(zone_id) + "\n")
+
                 finter.write(str(int(i / 2)) + "\n")
 
                 # Second Pass: Write interface files
