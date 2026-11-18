@@ -136,6 +136,7 @@ def main():
             nodeTags, nodeCoords, nodeParams = gmsh.model.mesh.getNodes()
 
             nodeCoords = np.array(nodeCoords).reshape((-1, 3))
+            node_ids = {tag: index for index, tag in enumerate(nodeTags, start=1)}
 
             # Create a versioned name containing mesh sizing and timestamp to avoid overwriting
             timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -151,7 +152,7 @@ def main():
                 fnode.write(str(len(nodeTags)) + "\n")
                 for tag, xyz_e in zip(nodeTags, nodeCoords):
                     xyz_e = ' '.join(str(i) for i in xyz_e)
-                    fnode.write(str(tag) + ' ' + str(xyz_e) + "\n")
+                    fnode.write(str(node_ids[tag]) + ' ' + str(xyz_e) + "\n")
             print_duration(f"{model_name} Writing Nodes")
 
             entities = gmsh.model.getEntities(3)
@@ -218,7 +219,7 @@ def main():
                     # Pass file handles to helper
                     check_and_fix_orientation(
                         e, finterface, felement, fzone, finter,
-                        zone_id=zone_ids[e[1]])
+                        zone_id=zone_ids[e[1]], node_ids=node_ids)
 
             print_duration(f"{model_name} Fixing Orientation & Writing Elements")
 

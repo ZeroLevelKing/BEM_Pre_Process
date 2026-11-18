@@ -98,7 +98,8 @@ def bfs_fix_orientation(start_elem, surfaces):
     return corrected_elements
 
 
-def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=None, zone_id=None):
+def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=None,
+                              zone_id=None, node_ids=None):
     """
     Main logic to verify and correct mesh orientation for a given entity 'e'.
     Writes results securely to provided file handles.
@@ -159,6 +160,8 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=N
                 corrected_elem = corrected_map.get(frozenset(nodes_arr))
                 final_nodes = corrected_elem if corrected_elem is not None else nodes_arr
 
+                if node_ids is not None:
+                    final_nodes = [node_ids[node] for node in final_nodes]
                 nodes_str = ' '.join(str(i) for i in final_nodes)
 
                 finterface.write(str(tag) +
@@ -174,6 +177,8 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=N
                 corrected_elem = corrected_map.get(frozenset(nodes_arr))
                 final_nodes = corrected_elem if corrected_elem is not None else nodes_arr
 
+                if node_ids is not None:
+                    final_nodes = [node_ids[node] for node in final_nodes]
                 nodes_str = ' '.join(str(i) for i in final_nodes)
 
                 # Format compatible with original ff.py

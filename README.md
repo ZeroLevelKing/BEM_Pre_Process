@@ -75,6 +75,8 @@ python main.py --input model.step --size_min 0.5 --size_max 2.0 --format vtk,msh
 
 导出时按体实体的遍历顺序，将 Gmsh 体编号映射为连续的 `1…N`。`elements.txt` 和 `interface.txt` 使用相同的子域编号映射，顺序与 `zone.txt` 中的面元计数一致。
 
+节点按 `nodes.txt` 中的写出顺序重新编号为 `1…节点数`，外边界和界面面元的节点引用同步转换为该编号。
+
 ## 源码目录
 
 | 文件 | 职责 |
