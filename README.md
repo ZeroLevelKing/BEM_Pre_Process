@@ -73,6 +73,8 @@ python main.py --input model.step --size_min 0.5 --size_max 2.0 --format vtk,msh
 
 边界条件和材料参数由求解器设置。使用输出文件前，需要核对求解器的编号规则、子域数量、界面配对及坐标单位。
 
+导出时按体实体的遍历顺序，将 Gmsh 体编号映射为连续的 `1…N`。`elements.txt` 和 `interface.txt` 使用相同的子域编号映射，顺序与 `zone.txt` 中的面元计数一致。
+
 ## 源码目录
 
 | 文件 | 职责 |

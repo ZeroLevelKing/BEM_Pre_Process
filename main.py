@@ -155,7 +155,7 @@ def main():
             print_duration(f"{model_name} Writing Nodes")
 
             entities = gmsh.model.getEntities(3)
-            zone = sum(len(e) for e in entities)
+            zone_ids = {tag: index for index, (_, tag) in enumerate(entities, start=1)}
             numElem = 0
             boundary = 0
             i = 0
@@ -163,7 +163,7 @@ def main():
                     open(os.path.join(data_dir, 'inter.txt'), 'w') as finter, \
                     open(os.path.join(data_dir, 'interface.txt'), 'w') as finterface, \
                     open(os.path.join(data_dir, 'elements.txt'), 'w') as felement:
-                fzone.write(str(int((zone) / 2)) + "\n")
+                fzone.write(str(len(entities)) + "\n")
 
                 # First Pass: Count elements and identify interfaces in one go?
                 # The logic below mimics ff.py logic exactly for compatibility
@@ -214,9 +214,11 @@ def main():
 
                 print("Fixing element orientation and writing output files...")
 
-                for e in gmsh.model.getEntities(3):
+                for e in entities:
                     # Pass file handles to helper
-                    check_and_fix_orientation(e, finterface, felement, fzone, finter)
+                    check_and_fix_orientation(
+                        e, finterface, felement, fzone, finter,
+                        zone_id=zone_ids[e[1]])
 
             print_duration(f"{model_name} Fixing Orientation & Writing Elements")
 

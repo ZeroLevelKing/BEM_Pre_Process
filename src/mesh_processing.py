@@ -98,11 +98,13 @@ def bfs_fix_orientation(start_elem, surfaces):
     return corrected_elements
 
 
-def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=None):
+def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=None, zone_id=None):
     """
     Main logic to verify and correct mesh orientation for a given entity 'e'.
     Writes results securely to provided file handles.
     """
+    if zone_id is None:
+        zone_id = abs(e[1])
     surface = gmsh.model.getBoundary([e])
     max_x_point, max_x_elem, max_x_elem_coords, max_x_elem_normal, max_x_elem_center = find_max_x(
         surface)
@@ -145,7 +147,7 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=N
 
         if n == "interface":
             finterface.write(str(abs(sur[1])) + "\n")
-            finterface.write(str(e[1]) + "\n")
+            finterface.write(str(zone_id) + "\n")
             up, down = gmsh.model.getAdjacencies(sur[0], abs(sur[1]))
             # If multiple connections, write total count
             if len(up) > 1:
@@ -182,7 +184,7 @@ def check_and_fix_orientation(e, finterface, felement, fzone, finter, data_dir=N
                                " " +
                                str(abs(sur[1])) +
                                " " +
-                               str(abs(e[1])) +
+                               str(zone_id) +
                                "\n")
 
 
